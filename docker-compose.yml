@@ -1,0 +1,227 @@
+services:
+  agent:
+    container_name: dagent-agent
+    build:
+      context: .
+      dockerfile: services/agent/Dockerfile
+    env_file:
+      - path: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/agent/.env
+        required: false
+    environment:
+      OPENCODE_CONFIG: /runtime/opencode.json
+    volumes:
+      - type: bind
+        source: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/agent/workspace
+        target: /workspace
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/opencode.json
+        target: /runtime/opencode.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/data/opencode
+        target: /root/.local/share/opencode
+        bind:
+          create_host_path: false
+    ports:
+      - "127.0.0.1:4096:4096"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:4096/global/health').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1))\""
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  telegram:
+    build:
+      context: .
+      dockerfile: services/telegram/Dockerfile
+    env_file:
+      - path: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/data/telegram/.env
+        required: false
+    environment:
+      DAGENT_RUNTIME_DIRECTORY: /runtime
+      OPENCODE_SERVER_URL: http://agent:4096
+    volumes:
+      - type: bind
+        source: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/data/telegram
+        target: /runtime/data/telegram
+        bind:
+          create_host_path: false
+    depends_on:
+      agent:
+        condition: service_healthy
+    restart: unless-stopped
+
+  control-api:
+    build:
+      context: .
+      dockerfile: services/cli-api/Dockerfile
+    env_file:
+      - path: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/data/google-calendar/.env
+        required: false
+      - path: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/data/whatsapp/.env
+        required: false
+    environment:
+      DAGENT_RUNTIME_DIRECTORY: /runtime
+      DAGENT_API_HOSTNAME: 0.0.0.0
+      DAGENT_API_PORT: 8000
+      OPENCODE_SERVER_URL: http://agent:4096
+      DAGENT_AGENT_RUNTIME_DIRECTORY: /agent-runtime
+      DAGENT_AGENT_OPENCODE_CONFIG_PATH: /agent-runtime/opencode.json
+      DAGENT_TELEGRAM_RUNTIME_DIRECTORY: /telegram-runtime
+      DAGENT_WHATSAPP_RUNTIME_DIRECTORY: /whatsapp-runtime
+      DAGENT_CALENDAR_MCP_TRANSPORT: remote
+      DAGENT_CALENDAR_MCP_REMOTE_URL: http://calendar-mcp:7332/mcp
+      DAGENT_WHATSAPP_MCP_TRANSPORT: remote
+      DAGENT_WHATSAPP_MCP_REMOTE_URL: http://whatsapp-mcp:7333/mcp
+      WAHA_API_KEY: ${WAHA_API_KEY:-local-development-waha-api-key-change-me}
+      WAHA_BASE_URL: http://waha:3000
+      WAHA_WEBHOOK_SECRET: ${WAHA_WEBHOOK_SECRET:-local-development-waha-webhook-secret-change-me}
+    volumes:
+      - type: bind
+        source: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/data/google-calendar
+        target: /runtime/data/google-calendar
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/.settings
+        target: /runtime/.settings
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/opencode.json
+        target: /agent-runtime/opencode.json
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/data/telegram
+        target: /telegram-runtime/data/telegram
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/data/whatsapp
+        target: /whatsapp-runtime/data/whatsapp
+        bind:
+          create_host_path: false
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      agent:
+        condition: service_started
+      waha:
+        condition: service_healthy
+    restart: unless-stopped
+
+  calendar-worker:
+    build:
+      context: .
+      dockerfile: services/calendar/Dockerfile
+    env_file:
+      - path: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/data/google-calendar/.env
+        required: false
+    environment:
+      DAGENT_RUNTIME_DIRECTORY: /runtime
+    volumes:
+      - type: bind
+        source: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/data/google-calendar
+        target: /runtime/data/google-calendar
+        bind:
+          create_host_path: false
+    restart: unless-stopped
+
+  calendar-mcp:
+    build:
+      context: .
+      dockerfile: services/calendar/Dockerfile
+    env_file:
+      - path: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/data/google-calendar/.env
+        required: false
+    environment:
+      DAGENT_RUNTIME_DIRECTORY: /runtime
+      DAGENT_CALENDAR_MCP_HOSTNAME: 0.0.0.0
+      DAGENT_CALENDAR_MCP_PORT: 7332
+      DAGENT_CALENDAR_MCP_PATH: /mcp
+    volumes:
+      - type: bind
+        source: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/data/google-calendar
+        target: /runtime/data/google-calendar
+        bind:
+          create_host_path: false
+    command: ["node", "dist/services/calendar/src/mcp/httpIndex.js"]
+    tty: false
+    restart: unless-stopped
+
+  waha:
+    platform: linux/amd64
+    image: devlikeapro/waha:gows-2026.7.1@sha256:8f3a7b11310594b973a588b2f7de061864c83532ae2cdff43280db0402bead29
+    env_file:
+      - path: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/data/whatsapp/.env
+        required: false
+    environment:
+      WAHA_API_KEY: ${WAHA_API_KEY:-local-development-waha-api-key-change-me}
+      WAHA_BASE_URL: http://waha:3000
+      WAHA_DASHBOARD_ENABLED: "false"
+      WAHA_PRINT_QR: "false"
+      WAHA_WORKER_RESTART_SESSIONS: "true"
+      WHATSAPP_API_HOSTNAME: 0.0.0.0
+      WHATSAPP_API_PORT: 3000
+      WHATSAPP_DEFAULT_ENGINE: GOWS
+      WHATSAPP_DOWNLOAD_MEDIA: "false"
+      WHATSAPP_HOOK_EVENTS: message,message.ack,message.edited,message.revoked,session.status
+      WHATSAPP_HOOK_HMAC_KEY: ${WAHA_WEBHOOK_SECRET:-local-development-waha-webhook-secret-change-me}
+      WHATSAPP_HOOK_RETRIES_ATTEMPTS: 10
+      WHATSAPP_HOOK_RETRIES_DELAY_SECONDS: 2
+      WHATSAPP_HOOK_RETRIES_POLICY: linear
+      WHATSAPP_HOOK_URL: http://control-api:8000/internal/whatsapp/webhook
+      WHATSAPP_START_SESSION: default
+      WHATSAPP_SWAGGER_ENABLED: "false"
+      WAHA_WEBHOOK_SECRET: ${WAHA_WEBHOOK_SECRET:-local-development-waha-webhook-secret-change-me}
+    volumes:
+      - type: bind
+        source: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/data/whatsapp/waha-sessions
+        target: /app/.sessions
+        bind:
+          create_host_path: false
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3000/health',{headers:{'X-Api-Key':process.env.WAHA_API_KEY}}).then((response)=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))\""
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  whatsapp-mcp:
+    build:
+      context: .
+      dockerfile: services/whatsapp/Dockerfile
+    env_file:
+      - path: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/data/whatsapp/.env
+        required: false
+    environment:
+      DAGENT_RUNTIME_DIRECTORY: /runtime
+      DAGENT_WHATSAPP_MCP_HOSTNAME: 0.0.0.0
+      DAGENT_WHATSAPP_MCP_PORT: 7333
+      DAGENT_WHATSAPP_MCP_PATH: /mcp
+    volumes:
+      - type: bind
+        source: ${HOME:?HOME must be set to use the canonical DAgent runtime}/.local/share/dagent/data/whatsapp
+        target: /runtime/data/whatsapp
+        bind:
+          create_host_path: false
+    command: ["node", "dist/services/whatsapp/src/mcp/httpIndex.js"]
+    tty: false
+    restart: unless-stopped

@@ -1,0 +1,4 @@
+{
+  "extends": "../../tsconfig.json",
+  "include": ["src/workerIndex.ts", "src/mcp/httpIndex.ts"]
+}

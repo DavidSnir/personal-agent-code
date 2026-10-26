@@ -1,0 +1,9 @@
+{
+  "name": "@personal-agent/agent",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "typescript": "^5.7.3"
+  }
+}

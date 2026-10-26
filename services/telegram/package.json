@@ -1,0 +1,16 @@
+{
+  "name": "@personal-agent/telegram",
+  "private": true,
+  "type": "module",
+  "main": "../../dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "typescript": "^5.7.3"
+  }
+}

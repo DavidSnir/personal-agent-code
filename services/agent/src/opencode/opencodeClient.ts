@@ -1,0 +1,193 @@
+import type { AgentModelOption } from "../agents/agentService.js";
+
+export type OpencodeClientConfig = {
+  opencodeServerUrl: string;
+  opencodeServerUsername?: string;
+  opencodeServerPassword?: string;
+  opencodeAgent?: string;
+  opencodeModel?: string;
+  opencodeDirectory?: string;
+  opencodeRequestTimeoutMs?: number;
+};
+
+export type OpencodeHealthResponse = {
+  healthy: boolean;
+  version: string;
+};
+
+type SessionResponse = {
+  id?: string;
+  sessionID?: string;
+};
+
+type MessagePart = {
+  type?: string;
+  text?: string;
+  content?: string;
+};
+
+type MessageResponse = {
+  parts?: MessagePart[];
+};
+
+type ProviderModel = {
+  id?: string;
+  name?: string;
+};
+
+type Provider = {
+  id: string;
+  name?: string;
+  models?: Record<string, ProviderModel>;
+};
+
+type ProviderResponse = {
+  all?: Provider[];
+  connected?: string[];
+};
+
+export class OpencodeClient {
+  private readonly baseUrl: string;
+  private readonly authHeader?: string;
+  private selectedModel?: string;
+
+  constructor(private readonly config: OpencodeClientConfig) {
+    this.baseUrl = config.opencodeServerUrl.replace(/\/+$/, "");
+    this.selectedModel = config.opencodeModel;
+
+    if (config.opencodeServerPassword) {
+      const username = config.opencodeServerUsername ?? "opencode";
+      const credentials = Buffer.from(`${username}:${config.opencodeServerPassword}`).toString("base64");
+      this.authHeader = `Basic ${credentials}`;
+    }
+  }
+
+  async health(): Promise<OpencodeHealthResponse> {
+    return this.request<OpencodeHealthResponse>("/global/health", { method: "GET" });
+  }
+
+  async createSession(chatId: number): Promise<string> {
+    const titleParts = [`Telegram chat ${chatId}`];
+    if (this.config.opencodeDirectory) {
+      titleParts.push(this.config.opencodeDirectory);
+    }
+
+    const session = await this.request<SessionResponse>("/session", {
+      method: "POST",
+      body: JSON.stringify({ title: titleParts.join(" - ") })
+    });
+
+    const sessionId = session.id ?? session.sessionID;
+    if (!sessionId) {
+      throw new Error("opencode did not return a session id");
+    }
+
+    return sessionId;
+  }
+
+  async listModels(): Promise<AgentModelOption[]> {
+    const response = await this.request<ProviderResponse>("/provider", { method: "GET" });
+    const providers = response.all ?? [];
+    const connected = new Set(response.connected ?? []);
+    const visibleProviders = connected.size ? providers.filter((provider) => connected.has(provider.id)) : providers;
+
+    return visibleProviders.flatMap((provider) =>
+      Object.entries(provider.models ?? {})
+        .map(([modelKey, model]) => ({
+          id: `${provider.id}/${model.id ?? modelKey}`,
+          providerId: provider.id,
+          providerName: provider.name ?? provider.id,
+          modelId: model.id ?? modelKey,
+          modelName: model.name ?? model.id ?? modelKey
+        }))
+        .sort((left, right) => left.id.localeCompare(right.id))
+    );
+  }
+
+  getModel(): string | undefined {
+    return this.selectedModel;
+  }
+
+  async setModel(model: string): Promise<void> {
+    const normalized = model.trim();
+    if (!normalized) {
+      throw new Error("Model is required. Use /model to list available models.");
+    }
+
+    const models = await this.listModels();
+    if (!models.some((option) => option.id === normalized)) {
+      throw new Error(`Unknown model: ${normalized}. Use /model to list available models.`);
+    }
+
+    this.selectedModel = normalized;
+  }
+
+  async sendMessage(sessionId: string, text: string): Promise<string> {
+    const body: Record<string, unknown> = {
+      parts: [{ type: "text", text }]
+    };
+
+    if (this.config.opencodeAgent) {
+      body.agent = this.config.opencodeAgent;
+    }
+    if (this.selectedModel) {
+      const slashIndex = this.selectedModel.indexOf("/");
+      if (slashIndex !== -1) {
+        body.model = { providerID: this.selectedModel.slice(0, slashIndex), modelID: this.selectedModel.slice(slashIndex + 1) };
+      } else {
+        body.model = this.selectedModel;
+      }
+    }
+
+    const response = await this.request<MessageResponse>(`/session/${encodeURIComponent(sessionId)}/message`, {
+      method: "POST",
+      body: JSON.stringify(body)
+    });
+
+    // Filter out parts with type "reasoning" (model internal reasoning that should not reach the user).
+    const textParts = response.parts
+      ?.filter((part) => part.type !== "reasoning")
+      .map((part) => part.text ?? part.content)
+      .filter((part): part is string => Boolean(part?.trim())) ?? [];
+
+    return textParts.join("\n\n").trim() || "opencode returned an empty response.";
+  }
+
+  private async request<T>(path: string, init: RequestInit): Promise<T> {
+    const headers = new Headers(init.headers);
+    headers.set("accept", "application/json");
+
+    if (init.body) {
+      headers.set("content-type", "application/json");
+    }
+    if (this.authHeader) {
+      headers.set("authorization", this.authHeader);
+    }
+
+    const url = new URL(`${this.baseUrl}${path}`);
+    if (this.config.opencodeDirectory) {
+      url.searchParams.set("directory", this.config.opencodeDirectory);
+    }
+
+    const timeoutMs = this.config.opencodeRequestTimeoutMs ?? 120000;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, { ...init, headers, signal: controller.signal });
+      if (!response.ok) {
+        const details = (await response.text().catch(() => "")).replace(/Bearer\s+[^\s"']+/gi, "Bearer [redacted]").slice(0, 500);
+        throw new Error(`opencode ${response.status} ${response.statusText}${details ? `: ${details}` : ""}`);
+      }
+      return (await response.json()) as T;
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new Error(`opencode request timed out after ${timeoutMs}ms; check OPENCODE_SERVER_URL and OPENCODE_REQUEST_TIMEOUT_MS`);
+      }
+      if (error instanceof Error && error.message.startsWith("opencode ")) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`opencode request failed: ${message.replace(/Bearer\s+[^\s"']+/gi, "Bearer [redacted]").slice(0, 500)}`);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+}

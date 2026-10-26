@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.opencode/node_modules/
+.wwebjs_cache/
+
+# Build output
+dist/
+data/
+runtime/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!**/.env.example
+credentials.json
+client_secret*.json
+google-calendar-credentials.json
+google-credentials.json
+credentials/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS/editor files
+.DS_Store
+.vscode/
+.idea/
+
+# Project agent instruction
+instruction/opencode-agents.md
+# instruction/project.md
+instruction/template-maintenance.md
+# AGENTS.md
+
+
+.gitignore

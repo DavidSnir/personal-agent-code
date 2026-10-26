@@ -1,0 +1,4 @@
+{
+  "extends": "../../tsconfig.json",
+  "include": ["src/index.ts", "src/restartDockerContainer.ts", "src/whatsapp/**/*.ts"]
+}

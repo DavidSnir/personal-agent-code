@@ -1,0 +1,24 @@
+# Telegram image build context allowlist.
+# Keep unrelated service packages out of the Docker context entirely.
+**
+
+!tsconfig.json
+
+!shared/
+!shared/**
+
+!services/
+!services/telegram/
+!services/telegram/**
+
+# Never send generated output, dependencies, runtime state, secrets, or VCS data.
+**/node_modules/
+dist/
+data/
+runtime/
+.git/
+.env
+.env.*
+*.log
+.wwebjs_cache/
+.wwebjs_auth/
